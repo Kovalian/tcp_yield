@@ -6,18 +6,91 @@
 #include <linux/module.h>
 #include <net/tcp.h>
 
+#define MIN_CWND 2U
+
 struct tcpid {
+	u32 delay; /* current delay estimate */
+	u32 delay_min; /* propagation delay estimate */
+	u32 reduction_factor; /* bit shift to be applied for window reduction */
+
+    u32 local_time_offset; /* initial local timestamp for delay estimate */
+    u32 remote_time_offset; /* initial remote timestamp for delay estimate */
 };
 
 static void tcp_pid_init(struct sock *sk) {
     
+    struct tcpid *pid = inet_csk_ca(sk);
+
+    pid->delay_min = UINT_MAX;
+    pid->reduction_factor = 3;
+
+    pid->local_time_offset = 0;
+    pid->remote_time_offset = 0;
 }
 
 void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
 
+	struct tcp_sock *tp = tcp_sk(sk);      
+    struct tcpid *pid = inet_csk_ca(sk);
+
+    u32 time, remote_time;
+
+    /* Capture initial timestamps on first run */
+    if (pid->remote_time_offset == 0) {
+        pid->remote_time_offset = tp->rx_opt.rcv_tsval;
+    }    
+    if (pid->local_time_offset == 0) {
+        pid->local_time_offset = tp->rx_opt.rcv_tsecr;
+    }
+
+    time = (tp->rx_opt.rcv_tsval - pid->remote_time_offset) * 1000 / HZ;
+    remote_time = (tp->rx_opt.rcv_tsecr - pid->local_time_offset) * 1000 / HZ;
+
+    if (time > remote_time) {
+    	pid->delay = time - remote_time;
+    }
+
+    if (pid->delay < pid->delay_min) {
+        pid->delay_min = pid->delay;
+    }
+
 }
 
 static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
+
+	struct tcp_sock *tp = tcp_sk(sk);      
+    struct tcpid *pid = inet_csk_ca(sk);
+
+    int target = 100; /* target queuing delay (in ms) */
+    u32 qdelay = 0;
+    int off_target;
+
+    /* Window under ssthresh, do slow start. */
+    if (tp->snd_cwnd <= tp->snd_ssthresh) {
+        acked = tcp_slow_start(tp, acked);
+        if (!acked)
+            return;
+    }
+
+    /* Only calculate queuing delay once we have some delay estimates */
+    if (pid->delay_min != UINT_MAX) {
+    	qdelay = pid->delay - pid->delay_min;
+    }
+
+    off_target = target - qdelay;
+
+    if (off_target >= 0) {
+    /* under delay target, apply additive increase */
+    	tcp_reno_cong_avoid(sk, ack, acked);
+    } else {
+    /* over delay target, apply multiplicative decrease */
+    	u32 decrement;
+
+    	decrement = tp->snd_cwnd >> pid->reduction_factor;
+    	tp->snd_cwnd -= decrement;
+    }
+
+    tp->snd_cwnd = max(MIN_CWND, tp->snd_cwnd);
 
 }
 
