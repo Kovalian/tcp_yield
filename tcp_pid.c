@@ -8,6 +8,10 @@
 
 #define MIN_CWND 2U
 
+static u32 debug_host = 185209004;
+module_param(debug_host, int, 0644);
+MODULE_PARM_DESC(debug_host, "destination host for debugging");
+
 struct tcpid {
 	u32 delay; /* current delay estimate */
 	u32 delay_min; /* propagation delay estimate */
@@ -47,11 +51,15 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     remote_time = (tp->rx_opt.rcv_tsecr - pid->local_time_offset) * 1000 / HZ;
 
     if (time > remote_time) {
-    	pid->delay = time - remote_time;
+        pid->delay = time - remote_time;
+        if (sk->sk_daddr == debug_host)
+            printk(KERN_DEBUG "delay calculated as %d", pid->delay);
     }
 
     if (pid->delay < pid->delay_min) {
         pid->delay_min = pid->delay;
+        if (sk->sk_daddr == debug_host)
+            printk(KERN_DEBUG "minimum delay is now %d", pid->delay);
     }
 
 }
@@ -74,20 +82,32 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
 
     /* Only calculate queuing delay once we have some delay estimates */
     if (pid->delay_min != UINT_MAX) {
-    	qdelay = pid->delay - pid->delay_min;
+        qdelay = pid->delay - pid->delay_min;
+        if (sk->sk_daddr == debug_host)
+            printk(KERN_DEBUG "queuing delay (%u) = delay (%u) - delay_min (%u)",
+                                    qdelay, pid->delay, pid->delay_min);
     }
 
     off_target = target - qdelay;
+    if (sk->sk_daddr == debug_host)
+        printk(KERN_DEBUG "off-target = %d", off_target);
 
     if (off_target >= 0) {
     /* under delay target, apply additive increase */
-    	tcp_reno_cong_avoid(sk, ack, acked);
+        tcp_reno_cong_avoid(sk, ack, acked);
+        if (sk->sk_daddr == debug_host)
+            printk(KERN_DEBUG "Under delay target, using Reno. CWND should become %u",
+                     tp->snd_cwnd); 
     } else {
     /* over delay target, apply multiplicative decrease */
     	u32 decrement;
 
     	decrement = tp->snd_cwnd >> pid->reduction_factor;
-    	tp->snd_cwnd -= decrement;
+        tp->snd_cwnd -= decrement;
+        
+        if (sk->sk_daddr == debug_host)
+            printk(KERN_DEBUG "Over delay target, reducing CWND by %u segments. CWND is now %u", 
+                    decrement, tp->snd_cwnd); 
     }
 
     tp->snd_cwnd = max(MIN_CWND, tp->snd_cwnd);
