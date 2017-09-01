@@ -11,6 +11,7 @@
 struct tcpid {
 	u32 delay; /* current delay estimate */
 	u32 delay_min; /* propagation delay estimate */
+    u32 delay_prev; /* previous delay estimate */
 	u32 reduction_factor; /* bit shift to be applied for window reduction */
 
     u32 local_time_offset; /* initial local timestamp for delay estimate */
@@ -22,6 +23,7 @@ static void tcp_pid_init(struct sock *sk) {
     struct tcpid *pid = inet_csk_ca(sk);
 
     pid->delay_min = UINT_MAX;
+    pid->delay_prev = 0;    
     pid->reduction_factor = 3;
 
     pid->local_time_offset = 0;
@@ -34,6 +36,7 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     struct tcpid *pid = inet_csk_ca(sk);
 
     u32 time, remote_time;
+    s32 trend = 0;    
 
     /* Capture initial timestamps on first run */
     if (pid->remote_time_offset == 0) {
@@ -50,9 +53,25 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     	pid->delay = time - remote_time;
     }
 
+    if (pid->delay_prev != 0) {
+    /* determine whether delay is increasing or decreasing */
+        trend = pid->delay - pid->delay_prev;
+    }
+
+    if (trend > 1) {
+    /* delay is increasing so a bigger decrease will be needed */ 
+        pid->reduction_factor -= 1;
+    } else if (trend < -1) {
+    /* delay is decreasing so make the next decrease smaller */
+        pid->reduction_factor += 1;
+    }
+
     if (pid->delay < pid->delay_min) {
         pid->delay_min = pid->delay;
     }
+
+    /* current delay reading becomes last seen */
+    pid->delay_prev = pid->delay;
 
 }
 
@@ -92,6 +111,7 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
 
     tp->snd_cwnd = max(MIN_CWND, tp->snd_cwnd);
 
+    pid->reduction_factor = 3; /* reset reduction factor to 1/8 */    
 }
 
 static struct tcp_congestion_ops tcp_pid = {
