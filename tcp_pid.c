@@ -8,6 +8,10 @@
 
 #define MIN_CWND 2U
 
+static int scalable_decrease = 1;
+module_param(scalable_decrease, int, 0644);
+MODULE_PARM_DESC(scalable_decrease, "activate scalable decrease");
+
 static u32 debug_host = 185209004;
 module_param(debug_host, int, 0644);
 MODULE_PARM_DESC(debug_host, "destination host for debugging");
@@ -62,12 +66,14 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     if (pid->delay_prev != 0) {
     /* determine whether delay is increasing or decreasing */
         trend = pid->delay - pid->delay_prev;
+        if (sk->sk_daddr == debug_host)
+            printk(KERN_DEBUG "delay trend is now %d", trend);
     }
 
-    if (trend > 1) {
+    if (trend > 1 && scalable_decrease == 1) {
     /* delay is increasing so a bigger decrease will be needed */ 
         pid->reduction_factor -= 1;
-    } else if (trend < -1) {
+    } else if (trend < -1 && scalable_decrease == 1) {
     /* delay is decreasing so make the next decrease smaller */
         pid->reduction_factor += 1;
     }
