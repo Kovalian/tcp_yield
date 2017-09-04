@@ -73,9 +73,11 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     if (trend > 1 && scalable_decrease == 1) {
     /* delay is increasing so a bigger decrease will be needed */ 
         pid->reduction_factor -= 1;
+        printk(KERN_DEBUG "reduction factor has decreased to %d", pid->reduction_factor);
     } else if (trend < -1 && scalable_decrease == 1) {
     /* delay is decreasing so make the next decrease smaller */
         pid->reduction_factor += 1;
+        printk(KERN_DEBUG "reduction factor has increased to %d", pid->reduction_factor);
     }
 
     if (pid->delay < pid->delay_min) {
