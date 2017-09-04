@@ -12,7 +12,7 @@ struct tcpid {
 	u32 delay; /* current delay estimate */
 	u32 delay_min; /* propagation delay estimate */
     u32 delay_prev; /* previous delay estimate */
-	u32 reduction_factor; /* bit shift to be applied for window reduction */
+	s8 reduction_factor; /* bit shift to be applied for window reduction */
 
     u32 local_time_offset; /* initial local timestamp for delay estimate */
     u32 remote_time_offset; /* initial remote timestamp for delay estimate */
