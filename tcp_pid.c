@@ -66,7 +66,7 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
         pid->reduction_factor += 1;
     }
 
-    if (pid->delay < pid->delay_min) {
+    if (pid->delay < pid->delay_min && pid->delay > 0) {
         pid->delay_min = pid->delay;
     }
 
