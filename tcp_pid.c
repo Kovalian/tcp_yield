@@ -8,6 +8,14 @@
 
 #define MIN_CWND 2U
 
+static int min_reduction = 5;
+module_param(min_reduction, int, 0644);
+MODULE_PARM_DESC(min_reduction, "smallest reduction (largest bit shift) that can be applied to cwnd");
+
+static int max_reduction = 1;
+module_param(max_reduction, int, 0644);
+MODULE_PARM_DESC(max_reduction, "largest reduction (smallest bit shift) that can be applied to cwnd");
+
 struct tcpid {
 	u32 delay; /* current delay estimate */
 	u32 delay_min; /* propagation delay estimate */
@@ -61,9 +69,11 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     if (trend > 1) {
     /* delay is increasing so a bigger decrease will be needed */ 
         pid->reduction_factor -= 1;
+        pid->reduction_factor = max(pid->reduction_factor, max_reduction);
     } else if (trend < -1) {
     /* delay is decreasing so make the next decrease smaller */
         pid->reduction_factor += 1;
+        pid->reduction_factor = min(pid->reduction_factor, min_reduction);
     }
 
     if (pid->delay < pid->delay_min && pid->delay > 0) {
