@@ -199,6 +199,7 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
         pid->delay_max = 0;
         pid->delay_smin = pid->delay_smax = 0;
         pid->reduction_factor = 3; /* reset reduction factor to 1/8 */ 
+        pid->window_start = time_in_ms(); /* new adaptation interval starts now */
     }
   
 }
