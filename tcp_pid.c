@@ -147,12 +147,14 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     /* delay is increasing so a bigger decrease will be needed */ 
         pid->reduction_factor -= 1;
         pid->reduction_factor = max(pid->reduction_factor, max_reduction);
-        printk(KERN_DEBUG "reduction factor has decreased to %d", pid->reduction_factor);
+        if (sk->sk_daddr == debug_host)
+            printk(KERN_DEBUG "reduction factor has decreased to %d", pid->reduction_factor);
     } else if (trend < -1 && scalable_decrease == 1) {
     /* delay is decreasing so make the next decrease smaller */
         pid->reduction_factor += 1;
         pid->reduction_factor = min(pid->reduction_factor, min_reduction);
-        printk(KERN_DEBUG "reduction factor has increased to %d", pid->reduction_factor);
+        if (sk->sk_daddr == debug_host)
+            printk(KERN_DEBUG "reduction factor has increased to %d", pid->reduction_factor);
     }
 
     if (pid->delay < pid->delay_min && pid->delay > 0) {
@@ -194,6 +196,8 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
 
     /* Calculate target queuing delay */
 	target = beta * 100 * (pid->delay_smax - pid->delay_smin) / 10000;
+    if (sk->sk_daddr == debug_host)
+        printk(KERN_DEBUG "target = %d", target);
 
     off_target = target - qdelay;
     if (sk->sk_daddr == debug_host)
@@ -227,6 +231,8 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
         pid->delay_smin = pid->delay_smax = 0;
         pid->reduction_factor = 3; /* reset reduction factor to 1/8 */ 
         pid->window_start = time_in_ms(); /* new adaptation interval starts now */
+        if (sk->sk_daddr == debug_host)
+            printk(KERN_DEBUG "adaptation interval ended, resetting all readings");
     }
   
 }
