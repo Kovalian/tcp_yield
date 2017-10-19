@@ -15,12 +15,32 @@ MODULE_PARM_DESC(scalable_decrease, "activate scalable decrease");
 static u32 debug_host = 185209004;
 module_param(debug_host, int, 0644);
 MODULE_PARM_DESC(debug_host, "destination host for debugging");
+static int min_reduction = 5;
+module_param(min_reduction, int, 0644);
+MODULE_PARM_DESC(min_reduction, "smallest reduction (largest bit shift) that can be applied to cwnd");
+
+static int max_reduction = 1;
+module_param(max_reduction, int, 0644);
+MODULE_PARM_DESC(max_reduction, "largest reduction (smallest bit shift) that can be applied to cwnd");
+
+static int beta = 15;
+module_param(beta, int, 0644);
+MODULE_PARM_DESC(beta, "percentage of total queue capacity to be used as congestion trigger");
 
 struct tcpid {
 	u32 delay; /* current delay estimate */
 	u32 delay_min; /* propagation delay estimate */
+	u32 delay_max; /* maximum delay seen */
+
+	u32 delay_smin; /* smoothed delay minimum */
+	u32 delay_smax; /* smoothed delay maximum */
+	u32 delay_tmin; /* time at which the minimum delay was observed */
+	u32 delay_tmax; /* time at which the maximum delay was observed */
+
+	u32 window_start; /* start time for most recent adaptation interval */
+
     u32 delay_prev; /* previous delay estimate */
-	u32 reduction_factor; /* bit shift to be applied for window reduction */
+	s8 reduction_factor; /* bit shift to be applied for window reduction */
 
     u32 local_time_offset; /* initial local timestamp for delay estimate */
     u32 remote_time_offset; /* initial remote timestamp for delay estimate */
@@ -31,11 +51,37 @@ static void tcp_pid_init(struct sock *sk) {
     struct tcpid *pid = inet_csk_ca(sk);
 
     pid->delay_min = UINT_MAX;
+    pid->delay_max = 0;
+
+    pid->delay_smin = pid->delay_smax = 0;
+    pid->delay_tmin = pid->delay_tmax = 0;
+
     pid->delay_prev = 0;    
     pid->reduction_factor = 3;
 
     pid->local_time_offset = 0;
     pid->remote_time_offset = 0;
+}
+
+static u32 update_delay(u32 delay, u32 average) {
+
+    if (average != 0) {
+        delay -= average >> 3; /* delay is now the error in the average */
+        average += delay; /* add delay to average as 7/8 old + 1/8 new */
+    } else {
+        average = delay << 3;
+    }
+
+    return average;
+}
+
+static inline u32 time_in_ms(void)
+{
+    #if HZ < 1000
+        return ktime_to_ms(ktime_get_real());
+    #else
+        return jiffies_to_msecs(jiffies);
+    #endif
 }
 
 void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
@@ -63,6 +109,33 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
             printk(KERN_DEBUG "delay calculated as %d", pid->delay);
     }
 
+    /* Update delay_min and delay_max as needed */
+    if (pid->delay < pid->delay_min) {
+        pid->delay_min = pid->delay;
+        pid->delay_tmin = tp->rx_opt.rcv_tsval;
+    } else if (pid->delay > pid->delay_max) {
+        pid->delay_max = pid->delay;
+        pid->delay_tmax = tp->rx_opt.rcv_tsval;
+    }
+
+    /* Update the smoothed minimum */
+    if ((pid->delay_min << 3) < pid->delay_smin) {
+        /* overwrite if the latest minimum is below the smoothed */
+        pid->delay_smin = pid->delay_min << 3;
+    } else if (pid->delay_min > pid->delay_smin) {
+        /* otherwise update the moving average */
+        pid->delay_smin = update_delay(pid->delay, pid->delay_smin);
+    }
+
+    /* Update the smoothed maximum */
+    if ((pid->delay_max << 3) < pid->delay_smax) {
+        /* overwrite if the latest maximum is below the smoothed */
+        pid->delay_smax = pid->delay_max << 3;
+    } else if (pid->delay_max > pid->delay_smax) {
+        /* otherwise update the moving average */
+        pid->delay_smax = update_delay(pid->delay, pid->delay_smax);
+    }
+
     if (pid->delay_prev != 0) {
     /* determine whether delay is increasing or decreasing */
         trend = pid->delay - pid->delay_prev;
@@ -73,14 +146,16 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     if (trend > 1 && scalable_decrease == 1) {
     /* delay is increasing so a bigger decrease will be needed */ 
         pid->reduction_factor -= 1;
+        pid->reduction_factor = max(pid->reduction_factor, max_reduction);
         printk(KERN_DEBUG "reduction factor has decreased to %d", pid->reduction_factor);
     } else if (trend < -1 && scalable_decrease == 1) {
     /* delay is decreasing so make the next decrease smaller */
         pid->reduction_factor += 1;
+        pid->reduction_factor = min(pid->reduction_factor, min_reduction);
         printk(KERN_DEBUG "reduction factor has increased to %d", pid->reduction_factor);
     }
 
-    if (pid->delay < pid->delay_min) {
+    if (pid->delay < pid->delay_min && pid->delay > 0) {
         pid->delay_min = pid->delay;
         if (sk->sk_daddr == debug_host)
             printk(KERN_DEBUG "minimum delay is now %d", pid->delay);
@@ -96,24 +171,29 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
 	struct tcp_sock *tp = tcp_sk(sk);      
     struct tcpid *pid = inet_csk_ca(sk);
 
-    int target = 100; /* target queuing delay (in ms) */
+    int target = 0; /* target queuing delay (in ms) */
+    u32 trigger_delay = 0;
     u32 qdelay = 0;
     int off_target;
 
     /* Window under ssthresh, do slow start. */
     if (tp->snd_cwnd <= tp->snd_ssthresh) {
         acked = tcp_slow_start(tp, acked);
+        pid->window_start = time_in_ms();
         if (!acked)
             return;
     }
 
     /* Only calculate queuing delay once we have some delay estimates */
-    if (pid->delay_min != UINT_MAX) {
-        qdelay = pid->delay - pid->delay_min;
+    if (pid->delay_smin != 0) {
+    	qdelay = pid->delay - pid->delay_smin;
         if (sk->sk_daddr == debug_host)
-            printk(KERN_DEBUG "queuing delay (%u) = delay (%u) - delay_min (%u)",
-                                    qdelay, pid->delay, pid->delay_min);
+            printk(KERN_DEBUG "queuing delay (%u) = delay (%u) - delay_smin (%u)",
+                                    qdelay, pid->delay, pid->delay_smin);
     }
+
+    /* Calculate target queuing delay */
+	target = beta * 100 * (pid->delay_smax - pid->delay_smin) / 10000;
 
     off_target = target - qdelay;
     if (sk->sk_daddr == debug_host)
@@ -139,7 +219,16 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
 
     tp->snd_cwnd = max(MIN_CWND, tp->snd_cwnd);
 
-    pid->reduction_factor = 3; /* reset reduction factor to 1/8 */    
+    /* Check for end of adaptation interval */
+    if (time_in_ms() >= pid->window_start + (pid->delay_tmax - pid->delay_tmin)) {
+    /* Reset all readings for end of adaptation interval */
+        pid->delay_min = UINT_MAX;
+        pid->delay_max = 0;
+        pid->delay_smin = pid->delay_smax = 0;
+        pid->reduction_factor = 3; /* reset reduction factor to 1/8 */ 
+        pid->window_start = time_in_ms(); /* new adaptation interval starts now */
+    }
+  
 }
 
 static struct tcp_congestion_ops tcp_pid = {
