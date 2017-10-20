@@ -191,17 +191,19 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
         qdelay = pid->delay - (pid->delay_smin >> 3);
         if (sk->sk_daddr == debug_host)
             printk(KERN_DEBUG "queuing delay (%u) = delay (%u) - delay_smin (%u)",
-                                    qdelay, pid->delay, pid->delay_smin);
+                                    qdelay, pid->delay, (pid->delay_smin >> 3));
     }
 
     /* Calculate target queuing delay */
     target = beta * 100 * ((pid->delay_smax - pid->delay_smin) >> 3) / 10000;
     if (sk->sk_daddr == debug_host)
-        printk(KERN_DEBUG "target = %d", target);
+        printk(KERN_DEBUG "target (%d) = 0.15 * delay_smax (%u) - delay_smin (%u)", 
+            target, (pid->delay_smax >> 3), (pid->delay_smin >> 3));
 
     off_target = target - qdelay;
     if (sk->sk_daddr == debug_host)
-        printk(KERN_DEBUG "off-target = %d", off_target);
+        printk(KERN_DEBUG "off-target (%d) = target (%d) - qdelay (%u)", 
+            off_target, target, qdelay);
 
     if (off_target >= 0) {
     /* under delay target, apply additive increase */
