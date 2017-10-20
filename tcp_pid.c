@@ -188,14 +188,14 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
 
     /* Only calculate queuing delay once we have some delay estimates */
     if (pid->delay_smin != 0) {
-    	qdelay = pid->delay - pid->delay_smin;
+        qdelay = pid->delay - (pid->delay_smin >> 3);
         if (sk->sk_daddr == debug_host)
             printk(KERN_DEBUG "queuing delay (%u) = delay (%u) - delay_smin (%u)",
                                     qdelay, pid->delay, pid->delay_smin);
     }
 
     /* Calculate target queuing delay */
-	target = beta * 100 * (pid->delay_smax - pid->delay_smin) / 10000;
+    target = beta * 100 * ((pid->delay_smax - pid->delay_smin) >> 3) / 10000;
     if (sk->sk_daddr == debug_host)
         printk(KERN_DEBUG "target = %d", target);
 
