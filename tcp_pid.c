@@ -171,12 +171,12 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
 
     /* Only calculate queuing delay once we have some delay estimates */
     if (pid->delay_smin != 0) {
-    	qdelay = pid->delay - pid->delay_smin;
+    	qdelay = pid->delay - (pid->delay_smin >> 3);
     }
 
     /* Calculate target queuing delay */
-	target = beta * 100 * (pid->delay_smax - pid->delay_smin) / 10000;
-
+    target = beta * 100 * ((pid->delay_smax - pid->delay_smin) >> 3) / 10000;
+    
     off_target = target - qdelay;
 
     if (off_target >= 0) {
