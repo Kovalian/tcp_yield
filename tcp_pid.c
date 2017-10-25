@@ -119,8 +119,8 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     }
 
     /* Update the smoothed maximum */
-    if ((pid->delay_max << 3) < pid->delay_smax) {
-        /* overwrite if the latest maximum is below the smoothed */
+    if ((pid->delay_max << 3) > pid->delay_smax) {
+        /* overwrite if the latest maximum is above the smoothed */
         pid->delay_smax = pid->delay_max << 3;
     } else if (pid->delay_max > pid->delay_smax) {
         /* otherwise update the moving average */
