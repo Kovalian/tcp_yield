@@ -34,10 +34,6 @@ struct tcpid {
 
 	u32 delay_smin; /* smoothed delay minimum */
 	u32 delay_smax; /* smoothed delay maximum */
-	u32 delay_tmin; /* time at which the minimum delay was observed */
-	u32 delay_tmax; /* time at which the maximum delay was observed */
-
-	u32 window_start; /* start time for most recent adaptation interval */
 
     u32 delay_prev; /* previous delay estimate */
 	s8 reduction_factor; /* bit shift to be applied for window reduction */
@@ -54,7 +50,6 @@ static void tcp_pid_init(struct sock *sk) {
     pid->delay_max = 0;
 
     pid->delay_smin = pid->delay_smax = 0;
-    pid->delay_tmin = pid->delay_tmax = 0;
 
     pid->delay_prev = 0;    
     pid->reduction_factor = 3;
@@ -112,14 +107,12 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     /* Update delay_min and delay_max as needed */
     if (pid->delay < pid->delay_min) {
         pid->delay_min = pid->delay;
-        pid->delay_tmin = tp->rx_opt.rcv_tsval;
     } else if (pid->delay > pid->delay_max) {
         pid->delay_max = pid->delay;
-        pid->delay_tmax = tp->rx_opt.rcv_tsval;
     }
 
     /* Update the smoothed minimum */
-    if ((pid->delay_min << 3) < pid->delay_smin) {
+    if (((pid->delay_min << 3) < pid->delay_smin) || pid->delay_smin == 0) {
         /* overwrite if the latest minimum is below the smoothed */
         pid->delay_smin = pid->delay_min << 3;
     } else if (pid->delay_min > pid->delay_smin) {
@@ -128,7 +121,7 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     }
 
     /* Update the smoothed maximum */
-    if ((pid->delay_max << 3) < pid->delay_smax) {
+    if (((pid->delay_max << 3) > pid->delay_smax) || pid->delay_smax == 0) {
         /* overwrite if the latest maximum is below the smoothed */
         pid->delay_smax = pid->delay_max << 3;
     } else if (pid->delay_max > pid->delay_smax) {
@@ -181,7 +174,6 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
     /* Window under ssthresh, do slow start. */
     if (tp->snd_cwnd <= tp->snd_ssthresh) {
         acked = tcp_slow_start(tp, acked);
-        pid->window_start = time_in_ms();
         if (!acked)
             return;
     }
@@ -225,18 +217,8 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
 
     tp->snd_cwnd = max(MIN_CWND, tp->snd_cwnd);
 
-    /* Check for end of adaptation interval */
-    if (time_in_ms() >= pid->window_start + (pid->delay_tmax - pid->delay_tmin)) {
-    /* Reset all readings for end of adaptation interval */
-        pid->delay_min = UINT_MAX;
-        pid->delay_max = 0;
-        pid->delay_smin = pid->delay_smax = 0;
-        pid->reduction_factor = 3; /* reset reduction factor to 1/8 */ 
-        pid->window_start = time_in_ms(); /* new adaptation interval starts now */
-        if (sk->sk_daddr == debug_host)
-            printk(KERN_DEBUG "adaptation interval ended, resetting all readings");
-    }
-  
+    pid->delay_min = UINT_MAX;
+    pid->delay_max = 0;
 }
 
 static struct tcp_congestion_ops tcp_pid = {
