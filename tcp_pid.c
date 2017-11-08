@@ -150,7 +150,6 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
     struct tcpid *pid = inet_csk_ca(sk);
 
     int target = 0; /* target queuing delay (in ms) */
-    u32 trigger_delay = 0;
     u32 qdelay = 0;
     int off_target;
 
