@@ -179,6 +179,9 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
 
     	decrement = tp->snd_cwnd >> pid->reduction_factor;
     	tp->snd_cwnd -= decrement;
+
+        /* just decreased, next decrease should be smaller */
+        pid->reduction_factor += 1;
     }
 
     tp->snd_cwnd = max(MIN_CWND, tp->snd_cwnd);
