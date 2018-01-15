@@ -12,7 +12,7 @@ static int min_reduction = 5;
 module_param(min_reduction, int, 0644);
 MODULE_PARM_DESC(min_reduction, "smallest reduction (largest bit shift) that can be applied to cwnd");
 
-static int max_reduction = 1;
+static int max_reduction = 0;
 module_param(max_reduction, int, 0644);
 MODULE_PARM_DESC(max_reduction, "largest reduction (smallest bit shift) that can be applied to cwnd");
 
