@@ -126,11 +126,11 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
         trend = pid->delay - pid->delay_prev;
     }
 
-    if (trend > 1) {
+    if (trend >= 1) {
     /* delay is increasing so a bigger decrease will be needed */ 
         pid->reduction_factor -= 1;
         pid->reduction_factor = max(pid->reduction_factor, max_reduction);
-    } else if (trend < -1) {
+    } else if (trend <= -1) {
     /* delay is decreasing so make the next decrease smaller */
         pid->reduction_factor += 1;
         pid->reduction_factor = min(pid->reduction_factor, min_reduction);
