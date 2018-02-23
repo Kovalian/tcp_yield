@@ -61,13 +61,13 @@ static void tcp_pid_init(struct sock *sk) {
     pid->remote_time_offset = 0;
 }
 
-static u32 update_delay(u32 delay, u32 average) {
+static u32 update_delay(u32 delay, u32 average, int avg_factor) {
 
     if (average != 0) {
-        delay -= average >> 3; /* delay is now the error in the average */
-        average += delay; /* add delay to average as 7/8 old + 1/8 new */
+        delay -= average >> avg_factor; /* delay is now the error in the average */
+        average += delay; /* add delay to average as factor-1/factor old + 1/factor new */
     } else {
-        average = delay << 3;
+        average = delay << avg_factor;
     }
 
     return average;
@@ -118,7 +118,7 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
         pid->delay_smin = pid->delay_min << 3;
     } else if (pid->delay_min > pid->delay_smin && pid->delay_min != UINT_MAX) {
         /* otherwise update the moving average */
-        pid->delay_smin = update_delay(pid->delay, pid->delay_smin);
+        pid->delay_smin = update_delay(pid->delay, pid->delay_smin, 3);
     }
 
     /* Update the smoothed maximum */
@@ -128,7 +128,7 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     } else if (pid->delay_max > pid->delay_smax && pid->delay_max != 0) {
         /* currently unused */
         /* otherwise update the moving average */
-        pid->delay_smax = update_delay(pid->delay, pid->delay_smax);
+        pid->delay_smax = update_delay(pid->delay, pid->delay_smax, 3);
     }
 
     if (pid->delay_prev != 0) {
