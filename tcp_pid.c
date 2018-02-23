@@ -30,6 +30,10 @@ module_param(decrease_threshold, int, 0644);
 MODULE_PARM_DESC(decrease_threshold, "smallest delay decrease required over history to increase "  
     "the reduction factor (trigger a smaller decrease)");
 
+static int hist_factor = 2;
+module_param(hist_factor, int, 0644);
+MODULE_PARM_DESC(hist_factor, "bit shift applied to average of delay history");
+
 struct tcpid {
 	u32 delay; /* current delay estimate */
 	u32 delay_min; /* propagation delay estimate */
@@ -133,7 +137,7 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
 
     if (pid->delay_prev != 0) {
     /* determine whether delay is increasing or decreasing */
-        trend = pid->delay - pid->delay_prev;
+        trend = pid->delay - (pid->delay_prev >> hist_factor);
     }
 
     if (trend >= increase_threshold) {
@@ -151,7 +155,7 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     }
 
     /* current delay reading becomes last seen */
-    pid->delay_prev = pid->delay;
+    pid->delay_prev = update_delay(pid->delay, pid->delay_prev, hist_factor);
 
 }
 
