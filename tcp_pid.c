@@ -20,6 +20,16 @@ static int beta = 15;
 module_param(beta, int, 0644);
 MODULE_PARM_DESC(beta, "percentage of total queue capacity to be used as congestion trigger");
 
+static int increase_threshold = 1;
+module_param(increase_threshold, int, 0644);
+MODULE_PARM_DESC(increase_threshold, "smallest delay increase required over history to reduce "  
+    "the reduction factor (trigger a larger decrease)");
+
+static int decrease_threshold = -1;
+module_param(decrease_threshold, int, 0644);
+MODULE_PARM_DESC(decrease_threshold, "smallest delay decrease required over history to increase "  
+    "the reduction factor (trigger a smaller decrease)");
+
 struct tcpid {
 	u32 delay; /* current delay estimate */
 	u32 delay_min; /* propagation delay estimate */
@@ -126,11 +136,11 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
         trend = pid->delay - pid->delay_prev;
     }
 
-    if (trend >= 1) {
+    if (trend >= increase_threshold) {
     /* delay is increasing so a bigger decrease will be needed */ 
         pid->reduction_factor -= 1;
         pid->reduction_factor = max(pid->reduction_factor, max_reduction);
-    } else if (trend <= -1) {
+    } else if (trend <= decrease_threshold) {
     /* delay is decreasing so make the next decrease smaller */
         pid->reduction_factor += 1;
         pid->reduction_factor = min(pid->reduction_factor, min_reduction);
