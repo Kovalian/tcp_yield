@@ -34,6 +34,10 @@ static int hist_factor = 2;
 module_param(hist_factor, int, 0644);
 MODULE_PARM_DESC(hist_factor, "bit shift applied to average of delay history");
 
+static int trend_factor = 128;
+module_param(trend_factor, int, 0644);
+MODULE_PARM_DESC(trend_factor, "averaging factor applied to average of delay trend");
+
 struct tcpid {
 	u32 delay; /* current delay estimate */
 	u32 delay_min; /* propagation delay estimate */
@@ -43,6 +47,8 @@ struct tcpid {
 	u32 delay_smax; /* smoothed delay maximum */
 
     u32 delay_prev; /* previous delay estimate */
+    s32 delay_trend; /* smoothed historic trend */
+
 	s8 reduction_factor; /* bit shift to be applied for window reduction */
 
     u32 local_time_offset; /* initial local timestamp for delay estimate */
@@ -59,6 +65,8 @@ static void tcp_pid_init(struct sock *sk) {
     pid->delay_smin = pid->delay_smax = 0;
 
     pid->delay_prev = 0;    
+    pid->delay_trend = 0;
+    
     pid->reduction_factor = 3;
 
     pid->local_time_offset = 0;
@@ -72,6 +80,18 @@ static u32 update_delay(u32 delay, u32 average, int avg_factor) {
         average += delay; /* add delay to average as factor-1/factor old + 1/factor new */
     } else {
         average = delay << avg_factor;
+    }
+
+    return average;
+}
+
+static u32 update_delay_trend(s32 delay, s32 average) {
+
+    if (average != 0) {
+        delay -= average / trend_factor; /* delay is now the error in the average */
+        average += delay; /* add delay to average as 127/128 old + 1/128 new */
+    } else {
+        average = delay * trend_factor;
     }
 
     return average;
@@ -156,6 +176,9 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
 
     /* current delay reading becomes last seen */
     pid->delay_prev = update_delay(pid->delay, pid->delay_prev, hist_factor);
+
+    /* update delay trend history using current */
+    pid->delay_trend = update_delay_trend(trend, pid->delay_trend);
 
 }
 
