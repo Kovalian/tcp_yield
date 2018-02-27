@@ -12,9 +12,13 @@ static int min_reduction = 5;
 module_param(min_reduction, int, 0644);
 MODULE_PARM_DESC(min_reduction, "smallest reduction (largest bit shift) that can be applied to cwnd");
 
-static int max_reduction = 0;
+static int max_reduction = 3;
 module_param(max_reduction, int, 0644);
-MODULE_PARM_DESC(max_reduction, "largest reduction (smallest bit shift) that can be applied to cwnd");
+MODULE_PARM_DESC(max_reduction, "largest reduction (smallest bit shift) that can be applied to cwnd when no cross traffic is detected");
+
+static int maxc_reduction = 0;
+module_param(maxc_reduction, int, 0644);
+MODULE_PARM_DESC(max_reduction, "largest reduction (smallest bit shift) that can be applied to cwnd when cross traffic is detected");
 
 static int beta = 15;
 module_param(beta, int, 0644);
@@ -38,6 +42,11 @@ static int trend_factor = 128;
 module_param(trend_factor, int, 0644);
 MODULE_PARM_DESC(trend_factor, "averaging factor applied to average of delay trend");
 
+static int ct_threshold = 2;
+module_param(ct_threshold, int, 0644);
+MODULE_PARM_DESC(ct_threshold, "bit shift applied to average of delay history for cross traffic detection");
+
+
 struct tcpid {
 	u32 delay; /* current delay estimate */
 	u32 delay_min; /* propagation delay estimate */
@@ -50,6 +59,7 @@ struct tcpid {
     s32 delay_trend; /* smoothed historic trend */
 
 	s8 reduction_factor; /* bit shift to be applied for window reduction */
+    u8 cross_traffic; /* binary value denoting the detection of cross-traffic */
 
     u32 local_time_offset; /* initial local timestamp for delay estimate */
     u32 remote_time_offset; /* initial remote timestamp for delay estimate */
@@ -68,6 +78,7 @@ static void tcp_pid_init(struct sock *sk) {
     pid->delay_trend = 0;
     
     pid->reduction_factor = 3;
+    pid->cross_traffic = 0;
 
     pid->local_time_offset = 0;
     pid->remote_time_offset = 0;
@@ -158,9 +169,18 @@ void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
     if (pid->delay_prev != 0) {
     /* determine whether delay is increasing or decreasing */
         trend = pid->delay - (pid->delay_prev >> hist_factor);
+
+        if (pid->delay_trend != 0 && trend > 
+            max((pid->delay_trend / trend_factor) * ct_threshold, 1)) {
+                pid->cross_traffic = 1;
+        }
     }
 
-    if (trend >= increase_threshold) {
+    if (trend >= increase_threshold && pid->cross_traffic == 1) {
+    /* delay is increasing and cross traffic is present so a bigger decrease will be needed */
+        pid->reduction_factor -= 1;
+        pid->reduction_factor = max(pid->reduction_factor, maxc_reduction);
+    } else if (trend >= increase_threshold) {
     /* delay is increasing so a bigger decrease will be needed */ 
         pid->reduction_factor -= 1;
         pid->reduction_factor = max(pid->reduction_factor, max_reduction);
@@ -226,6 +246,7 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
 
     pid->delay_min = UINT_MAX;
     pid->delay_max = 0;
+    pid->cross_traffic = 0;
 }
 
 static struct tcp_congestion_ops tcp_pid = {
