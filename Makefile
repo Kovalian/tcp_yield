@@ -1,4 +1,4 @@
-obj-m := tcp_pid.o
+obj-m := tcp_yield.o
 
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)

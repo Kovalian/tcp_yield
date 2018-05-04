@@ -1,5 +1,5 @@
 /*
- * TCP Proportional Integral Derivative (PID)
+ * Yield TCP
  * 
  */
 
@@ -47,7 +47,7 @@ module_param(ct_threshold, int, 0644);
 MODULE_PARM_DESC(ct_threshold, "bit shift applied to average of delay history for cross traffic detection");
 
 
-struct tcpid {
+struct yield {
 	u32 delay; /* current delay estimate */
 	u32 delay_min; /* propagation delay estimate */
 	u32 delay_max; /* maximum delay seen */
@@ -65,23 +65,23 @@ struct tcpid {
     u32 remote_time_offset; /* initial remote timestamp for delay estimate */
 };
 
-static void tcp_pid_init(struct sock *sk) {
+static void tcp_yield_init(struct sock *sk) {
     
-    struct tcpid *pid = inet_csk_ca(sk);
+    struct yield *yield = inet_csk_ca(sk);
 
-    pid->delay_min = UINT_MAX;
-    pid->delay_max = 0;
+    yield->delay_min = UINT_MAX;
+    yield->delay_max = 0;
 
-    pid->delay_smin = pid->delay_smax = 0;
+    yield->delay_smin = yield->delay_smax = 0;
 
-    pid->delay_prev = 0;    
-    pid->delay_trend = 0;
+    yield->delay_prev = 0;    
+    yield->delay_trend = 0;
     
-    pid->reduction_factor = 3;
-    pid->cross_traffic = 0;
+    yield->reduction_factor = 3;
+    yield->cross_traffic = 0;
 
-    pid->local_time_offset = 0;
-    pid->remote_time_offset = 0;
+    yield->local_time_offset = 0;
+    yield->remote_time_offset = 0;
 }
 
 static u32 update_delay(u32 delay, u32 average, int avg_factor) {
@@ -117,95 +117,95 @@ static inline u32 time_in_ms(void)
     #endif
 }
 
-void tcp_pid_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
+void tcp_yield_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us) {
 
 	struct tcp_sock *tp = tcp_sk(sk);      
-    struct tcpid *pid = inet_csk_ca(sk);
+    struct yield *yield = inet_csk_ca(sk);
 
     u32 time, remote_time;
     s32 trend = 0;    
 
     /* Capture initial timestamps on first run */
-    if (pid->remote_time_offset == 0) {
-        pid->remote_time_offset = tp->rx_opt.rcv_tsval;
+    if (yield->remote_time_offset == 0) {
+        yield->remote_time_offset = tp->rx_opt.rcv_tsval;
     }    
-    if (pid->local_time_offset == 0) {
-        pid->local_time_offset = tp->rx_opt.rcv_tsecr;
+    if (yield->local_time_offset == 0) {
+        yield->local_time_offset = tp->rx_opt.rcv_tsecr;
     }
 
-    time = (tp->rx_opt.rcv_tsval - pid->remote_time_offset) * 1000 / HZ;
-    remote_time = (tp->rx_opt.rcv_tsecr - pid->local_time_offset) * 1000 / HZ;
+    time = (tp->rx_opt.rcv_tsval - yield->remote_time_offset) * 1000 / HZ;
+    remote_time = (tp->rx_opt.rcv_tsecr - yield->local_time_offset) * 1000 / HZ;
 
     if (time > remote_time) {
-    	pid->delay = time - remote_time;
+    	yield->delay = time - remote_time;
     }
 
     /* Update delay_min and delay_max as needed */
-    if (pid->delay < pid->delay_min) {
-        pid->delay_min = pid->delay;
-    } else if (pid->delay > pid->delay_max) {
-        pid->delay_max = pid->delay;
+    if (yield->delay < yield->delay_min) {
+        yield->delay_min = yield->delay;
+    } else if (yield->delay > yield->delay_max) {
+        yield->delay_max = yield->delay;
     }
 
     /* Update the smoothed minimum */
-    if (((pid->delay_min << 3) < pid->delay_smin) || pid->delay_smin == 0) {
+    if (((yield->delay_min << 3) < yield->delay_smin) || yield->delay_smin == 0) {
         /* overwrite if the latest minimum is below the smoothed */
-        pid->delay_smin = pid->delay_min << 3;
-    } else if (pid->delay_min > pid->delay_smin && pid->delay_min != UINT_MAX) {
+        yield->delay_smin = yield->delay_min << 3;
+    } else if (yield->delay_min > yield->delay_smin) {
         /* otherwise update the moving average */
-        pid->delay_smin = update_delay(pid->delay, pid->delay_smin, 3);
+        yield->delay_smin = update_delay(yield->delay, yield->delay_smin, 3);
     }
 
     /* Update the smoothed maximum */
-    if (((pid->delay_max << 3) > pid->delay_smax) || pid->delay_smax == 0) {
+    if (((yield->delay_max << 3) > yield->delay_smax) || yield->delay_smax == 0) {
         /* overwrite if the latest maximum is below the smoothed */
-        pid->delay_smax = pid->delay_max << 3;
-    } else if (pid->delay_max > pid->delay_smax && pid->delay_max != 0) {
+        yield->delay_smax = yield->delay_max << 3;
+    } else if (yield->delay_max > yield->delay_smax) {
         /* currently unused */
         /* otherwise update the moving average */
-        pid->delay_smax = update_delay(pid->delay, pid->delay_smax, 3);
+        yield->delay_smax = update_delay(yield->delay, yield->delay_smax, 3);
     }
 
-    if (pid->delay_prev != 0) {
+    if (yield->delay_prev != 0) {
     /* determine whether delay is increasing or decreasing */
-        trend = pid->delay - (pid->delay_prev >> hist_factor);
+        trend = yield->delay - (yield->delay_prev >> hist_factor);
 
-        if (pid->delay_trend != 0 && trend > 
-            max((pid->delay_trend / trend_factor) * ct_threshold, 1)) {
-                pid->cross_traffic = 1;
+        if (yield->delay_trend != 0 && trend > 
+            max((yield->delay_trend / trend_factor) * ct_threshold, 1)) {
+                yield->cross_traffic = 1;
         }
     }
 
-    if (trend >= increase_threshold && pid->cross_traffic == 1) {
+    if (trend >= increase_threshold && yield->cross_traffic == 1) {
     /* delay is increasing and cross traffic is present so a bigger decrease will be needed */
-        pid->reduction_factor -= 1;
-        pid->reduction_factor = max(pid->reduction_factor, maxc_reduction);
+        yield->reduction_factor -= 1;
+        yield->reduction_factor = max(yield->reduction_factor, maxc_reduction);
     } else if (trend >= increase_threshold) {
     /* delay is increasing so a bigger decrease will be needed */ 
-        pid->reduction_factor -= 1;
-        pid->reduction_factor = max(pid->reduction_factor, max_reduction);
+        yield->reduction_factor -= 1;
+        yield->reduction_factor = max(yield->reduction_factor, max_reduction);
     } else if (trend <= decrease_threshold) {
     /* delay is decreasing so make the next decrease smaller */
-        pid->reduction_factor += 1;
-        pid->reduction_factor = min(pid->reduction_factor, min_reduction);
+        yield->reduction_factor += 1;
+        yield->reduction_factor = min(yield->reduction_factor, min_reduction);
     }
 
-    if (pid->delay < pid->delay_min && pid->delay > 0) {
-        pid->delay_min = pid->delay;
+    if (yield->delay < yield->delay_min && yield->delay > 0) {
+        yield->delay_min = yield->delay;
     }
 
     /* current delay reading becomes last seen */
-    pid->delay_prev = update_delay(pid->delay, pid->delay_prev, hist_factor);
+    yield->delay_prev = update_delay(yield->delay, yield->delay_prev, hist_factor);
 
     /* update delay trend history using current */
-    pid->delay_trend = update_delay_trend(trend, pid->delay_trend);
+    yield->delay_trend = update_delay_trend(trend, yield->delay_trend);
 
 }
 
-static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
+static void tcp_yield_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
 
 	struct tcp_sock *tp = tcp_sk(sk);      
-    struct tcpid *pid = inet_csk_ca(sk);
+    struct yield *yield = inet_csk_ca(sk);
 
     int target = 0; /* target queuing delay (in ms) */
     u32 qdelay = 0;
@@ -219,12 +219,12 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
     }
 
     /* Only calculate queuing delay once we have some delay estimates */
-    if (pid->delay_smin != 0) {
-    	qdelay = pid->delay - (pid->delay_smin >> 3);
+    if (yield->delay_smin != 0) {
+    	qdelay = yield->delay - (yield->delay_smin >> 3);
     }
 
     /* Calculate target queuing delay */
-    target = beta * 100 * ((pid->delay_smax - pid->delay_smin) >> 3) / 10000;
+    target = beta * 100 * ((yield->delay_smax - yield->delay_smin) >> 3) / 10000;
     
     off_target = target - qdelay;
 
@@ -235,40 +235,40 @@ static void tcp_pid_cong_avoid(struct sock *sk, u32 ack, u32 acked) {
     /* over delay target, apply multiplicative decrease */
     	u32 decrement;
 
-    	decrement = tp->snd_cwnd >> pid->reduction_factor;
+    	decrement = tp->snd_cwnd >> yield->reduction_factor;
     	tp->snd_cwnd -= decrement;
 
         /* just decreased, next decrease should be smaller */
-        pid->reduction_factor += 1;
+        yield->reduction_factor += 1;
     }
 
     tp->snd_cwnd = max(MIN_CWND, tp->snd_cwnd);
 
-    pid->delay_min = UINT_MAX;
-    pid->delay_max = 0;
-    pid->cross_traffic = 0;
+    yield->delay_min = UINT_MAX;
+    yield->delay_max = 0;
+    yield->cross_traffic = 0;
 }
 
-static struct tcp_congestion_ops tcp_pid = {
-    .init = tcp_pid_init,
+static struct tcp_congestion_ops tcp_yield = {
+    .init = tcp_yield_init,
     .ssthresh = tcp_reno_ssthresh,
-    .pkts_acked = tcp_pid_pkts_acked,
-    .cong_avoid = tcp_pid_cong_avoid,
-    .name = "pid"
+    .pkts_acked = tcp_yield_pkts_acked,
+    .cong_avoid = tcp_yield_cong_avoid,
+    .name = "yield"
 };
 
-static int __init tcp_pid_register(void){
-    BUILD_BUG_ON(sizeof(struct tcpid) > ICSK_CA_PRIV_SIZE);
-    return tcp_register_congestion_control(&tcp_pid);
+static int __init tcp_yield_register(void){
+    BUILD_BUG_ON(sizeof(struct yield) > ICSK_CA_PRIV_SIZE);
+    return tcp_register_congestion_control(&tcp_yield);
 }
 
-static void __exit tcp_pid_unregister(void){
-    tcp_unregister_congestion_control(&tcp_pid);
+static void __exit tcp_yield_unregister(void){
+    tcp_unregister_congestion_control(&tcp_yield);
 }
 
-module_init(tcp_pid_register);
-module_exit(tcp_pid_unregister);
+module_init(tcp_yield_register);
+module_exit(tcp_yield_unregister);
 
 MODULE_AUTHOR("Kevin Ong");
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("TCP PID");
+MODULE_DESCRIPTION("Yield TCP");
